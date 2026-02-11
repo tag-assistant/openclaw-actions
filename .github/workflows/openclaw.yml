@@ -1,0 +1,188 @@
+name: "🦞 OpenClaw Agent"
+
+on:
+  workflow_dispatch:
+    inputs:
+      task:
+        description: "Task for the agent (or leave blank for default heartbeat)"
+        required: false
+        type: string
+        default: ""
+      chain:
+        description: "Auto-restart before timeout (self-restarting chain)"
+        required: false
+        type: boolean
+        default: true
+      max_chains:
+        description: "Maximum number of chain restarts (0 = unlimited)"
+        required: false
+        type: number
+        default: 12
+      chain_number:
+        description: "(Internal) Current chain link number"
+        required: false
+        type: number
+        default: 1
+  schedule:
+    # Optional: run on a schedule (uncomment to enable)
+    # - cron: '0 */6 * * *'  # Every 6 hours
+    - cron: '0 8 * * *'  # Daily at 8 AM UTC
+
+env:
+  OPENCLAW_VERSION: "latest"
+  # Safety margin: restart 15 min before the 6-hour GitHub Actions timeout
+  MAX_RUNTIME_SECONDS: 20700  # 5h 45m
+  HEARTBEAT_INTERVAL: 300     # 5 min between heartbeats
+
+permissions:
+  actions: write   # Needed to trigger self-restart
+  contents: read
+
+jobs:
+  agent:
+    name: "🦞 OpenClaw (${{ github.event.inputs.chain_number || '1' }}/${{ github.event.inputs.max_chains || '∞' }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 6 hours (GitHub maximum for hosted runners)
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install OpenClaw
+        run: |
+          npm install -g openclaw@${{ env.OPENCLAW_VERSION }}
+          openclaw --version
+
+      - name: Restore workspace (from previous chain)
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.openclaw
+          key: openclaw-workspace-${{ github.run_id }}-${{ github.event.inputs.chain_number || '1' }}
+          restore-keys: |
+            openclaw-workspace-${{ github.run_id }}-
+            openclaw-workspace-
+
+      - name: Configure OpenClaw
+        env:
+          OPENCLAW_MODEL_PROVIDER_KEY: ${{ secrets.OPENCLAW_MODEL_PROVIDER_KEY }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          OPENCLAW_TELEGRAM_TOKEN: ${{ secrets.OPENCLAW_TELEGRAM_TOKEN }}
+          OPENCLAW_TELEGRAM_CHAT_ID: ${{ secrets.OPENCLAW_TELEGRAM_CHAT_ID }}
+        run: |
+          mkdir -p ~/.openclaw
+
+          # Write config if it doesn't exist (first run)
+          if [ ! -f ~/.openclaw/openclaw.json ]; then
+            echo "First run — writing config from template..."
+            envsubst < config/openclaw.template.json > ~/.openclaw/openclaw.json
+          fi
+
+          # Initialize workspace if needed
+          if [ ! -d ~/.openclaw/workspace ]; then
+            mkdir -p ~/.openclaw/workspace
+            cp -r workspace/* ~/.openclaw/workspace/ 2>/dev/null || true
+          fi
+
+          echo "✅ OpenClaw configured"
+          echo "Chain link: ${{ github.event.inputs.chain_number || '1' }}"
+
+      - name: Start OpenClaw Gateway
+        env:
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+        run: |
+          # Start gateway in background
+          openclaw gateway run --port 18789 &
+          GATEWAY_PID=$!
+          echo "GATEWAY_PID=$GATEWAY_PID" >> $GITHUB_ENV
+
+          # Wait for gateway to be ready
+          echo "Waiting for gateway..."
+          for i in $(seq 1 30); do
+            if openclaw gateway health --port 18789 2>/dev/null; then
+              echo "✅ Gateway is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Run Agent Task
+        env:
+          TASK: ${{ github.event.inputs.task }}
+          CHAIN_NUMBER: ${{ github.event.inputs.chain_number || '1' }}
+        run: |
+          START_TIME=$(date +%s)
+
+          if [ -n "$TASK" ]; then
+            echo "📋 Running task: $TASK"
+            openclaw agent --message "$TASK" --timeout 300 || true
+          else
+            echo "💓 Running default heartbeat"
+            openclaw agent --message "You are running inside GitHub Actions (chain #${CHAIN_NUMBER}). Check your HEARTBEAT.md and do productive work. Report what you did." --timeout 300 || true
+          fi
+
+          # Continuous heartbeat loop until timeout
+          while true; do
+            ELAPSED=$(( $(date +%s) - START_TIME ))
+            if [ $ELAPSED -ge ${{ env.MAX_RUNTIME_SECONDS }} ]; then
+              echo "⏰ Approaching timeout ($ELAPSED seconds elapsed). Time to restart."
+              break
+            fi
+
+            REMAINING=$(( ${{ env.MAX_RUNTIME_SECONDS }} - ELAPSED ))
+            echo "💓 Heartbeat at $(date -u +%H:%M:%S) UTC — ${REMAINING}s remaining"
+
+            openclaw agent --message "Heartbeat check. You have ${REMAINING} seconds remaining in this Actions run (chain #${CHAIN_NUMBER}). Do productive work or reply HEARTBEAT_OK." --timeout 300 || true
+
+            sleep ${{ env.HEARTBEAT_INTERVAL }}
+          done
+
+      - name: Save workspace (for next chain)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.openclaw
+          key: openclaw-workspace-${{ github.run_id }}-${{ github.event.inputs.chain_number || '1' }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-logs-chain-${{ github.event.inputs.chain_number || '1' }}
+          path: |
+            ~/.openclaw/logs/
+            ~/.openclaw/workspace/memory/
+          retention-days: 7
+
+      - name: Self-restart (chain link)
+        if: >-
+          always() &&
+          (github.event.inputs.chain == 'true' || github.event.inputs.chain == '') &&
+          (github.event.inputs.max_chains == '0' || 
+           fromJSON(github.event.inputs.chain_number || '1') < fromJSON(github.event.inputs.max_chains || '12'))
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NEXT_CHAIN=$(( ${{ github.event.inputs.chain_number || '1' }} + 1 ))
+          echo "🔄 Triggering chain link #${NEXT_CHAIN}..."
+
+          gh workflow run openclaw.yml \
+            --repo ${{ github.repository }} \
+            -f task="${{ github.event.inputs.task }}" \
+            -f chain=true \
+            -f max_chains="${{ github.event.inputs.max_chains || '12' }}" \
+            -f chain_number="${NEXT_CHAIN}"
+
+          echo "✅ Chain link #${NEXT_CHAIN} triggered"
+
+      - name: Stop gateway
+        if: always()
+        run: |
+          kill ${{ env.GATEWAY_PID }} 2>/dev/null || true
+          echo "🛑 Gateway stopped"

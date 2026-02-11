@@ -1,0 +1,19 @@
+{
+  "gateway": {
+    "mode": "local",
+    "port": 18789,
+    "auth": "token",
+    "token": "${OPENCLAW_GATEWAY_TOKEN}"
+  },
+  "providers": {
+    "github-copilot": {
+      "type": "copilot",
+      "apiKey": "${OPENCLAW_MODEL_PROVIDER_KEY}"
+    }
+  },
+  "model": "github-copilot/claude-sonnet-4",
+  "channels": {},
+  "agent": {
+    "workspace": "~/.openclaw/workspace"
+  }
+}
