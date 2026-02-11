@@ -16,15 +16,14 @@ A self-restarting GitHub Actions workflow that runs [OpenClaw](https://github.co
 │ Install OC   │     │ Restore ws   │     │ Restore ws   │
 │ Configure    │     │ Start gw     │     │ Start gw     │
 │ Start gw     │     │ Run tasks    │     │ Run tasks    │
-│ Run tasks    │     │ Save ws      │     │ Save ws      │
-│ Save ws      │     │ Trigger #3   │     │ Trigger #4   │
-│ Trigger #2   │     └──────────────┘     └──────────────┘
-└──────────────┘
+│ Save ws      │     │ Save ws      │     │ Save ws      │
+│ Trigger #2   │     │ Trigger #3   │     │ Trigger #4   │
+└──────────────┘     └──────────────┘     └──────────────┘
 ```
 
 1. **Install** — Sets up Node 22 + OpenClaw CLI
 2. **Restore** — Pulls workspace from cache (agent memory persists across chains)
-3. **Configure** — Writes `openclaw.json` from secrets/template
+3. **Configure** — Writes `openclaw.json` from template + env vars
 4. **Run** — Starts the gateway, executes tasks, runs heartbeat loop
 5. **Save** — Caches workspace + uploads logs as artifacts
 6. **Chain** — Triggers the next workflow run before timeout
@@ -39,34 +38,45 @@ Go to **Settings → Secrets → Actions** and add:
 
 | Secret | Description |
 |--------|-------------|
-| `OPENCLAW_MODEL_PROVIDER_KEY` | API key for your model provider (OpenAI, Anthropic, etc.) |
+| `OPENCLAW_MODEL_PROVIDER_KEY` | API key for your model provider (e.g. Anthropic `sk-ant-...`) |
 | `OPENCLAW_GATEWAY_TOKEN` | A random token for gateway auth (generate with `openssl rand -hex 32`) |
-| `OPENCLAW_TELEGRAM_TOKEN` | *(Optional)* Telegram bot token for notifications |
-| `OPENCLAW_TELEGRAM_CHAT_ID` | *(Optional)* Telegram chat ID for notifications |
 
-### 3. Configure the model
+The template defaults to **Anthropic Claude Sonnet 4.5**. The `OPENCLAW_MODEL_PROVIDER_KEY` secret is injected as `ANTHROPIC_API_KEY` at runtime.
 
-Edit `config/openclaw.template.json` to set your provider:
+### 3. (Optional) Change the model
 
+Edit `config/openclaw.template.json` to use a different provider. Examples:
+
+**OpenAI:**
 ```json
 {
-  "providers": {
-    "openai": {
-      "type": "openai",
-      "apiKey": "${OPENCLAW_MODEL_PROVIDER_KEY}"
+  "auth": {
+    "profiles": {
+      "openai:default": {
+        "provider": "openai",
+        "mode": "api_key"
+      }
     }
   },
-  "model": "openai/gpt-4o"
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "openai/gpt-4o"
+      }
+    }
+  }
 }
 ```
+
+Then update the workflow to set `OPENAI_API_KEY` instead of `ANTHROPIC_API_KEY`.
 
 ### 4. Run it
 
 - **Manual:** Go to **Actions → 🦞 OpenClaw Agent → Run workflow**
   - Enter a task or leave blank for heartbeat mode
   - Enable/disable self-restart chain
-  - Set max chain links (default: 12 = ~69 hours)
-- **Scheduled:** Uncomment the cron schedule in the workflow
+  - Set max chain links (default: 12 ≈ 69 hours)
+- **Scheduled:** The workflow runs daily at 8 AM UTC by default
 
 ## Configuration
 
@@ -78,12 +88,22 @@ Edit `config/openclaw.template.json` to set your provider:
 | `chain` | `true` | Auto-restart before timeout |
 | `max_chains` | `12` | Max chain restarts (0 = unlimited) |
 
-### Environment Variables
+### Environment Variables (in workflow)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MAX_RUNTIME_SECONDS` | `20700` (5h 45m) | When to trigger restart |
 | `HEARTBEAT_INTERVAL` | `300` (5 min) | Time between heartbeats |
+
+### Config Template
+
+`config/openclaw.template.json` uses `envsubst` for secret injection. Supported variables:
+
+| Variable | Used For |
+|----------|----------|
+| `${OPENCLAW_GATEWAY_TOKEN}` | `gateway.auth.token` |
+
+API keys are injected via environment variables at runtime (e.g. `ANTHROPIC_API_KEY`), not in the config file — OpenClaw reads them from the environment automatically.
 
 ## Architecture
 
@@ -107,14 +127,18 @@ The workflow uses `gh workflow run` to trigger itself before the 6-hour timeout:
 
 This requires `actions: write` permission (already configured).
 
+### Gateway Health Check
+
+The workflow waits up to 60 seconds for the gateway to respond on `http://127.0.0.1:18789/health`. If it doesn't start, the step fails immediately with debug logs — no more silent 5-hour loops of config errors.
+
 ### Cost Estimation
 
 On GitHub-hosted runners (ubuntu-latest):
 - **Free tier:** 2,000 minutes/month → ~5.5 hours/day of agent time
 - **Pro/Team:** 3,000 min/month → ~8.3 hours/day
-- **Enterprise:** 50,000 min/month → ~138 hours/day (unlimited effectively)
+- **Enterprise:** 50,000 min/month → effectively unlimited
 
-Each chain link uses ~345 minutes. With `max_chains=12`, a full run is ~69 hours.
+Each chain link uses up to ~345 minutes. With `max_chains=12`, a full run is ~69 hours.
 
 ## Demo Ideas
 

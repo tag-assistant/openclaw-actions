@@ -2,18 +2,47 @@
   "gateway": {
     "mode": "local",
     "port": 18789,
-    "auth": "token",
-    "token": "${OPENCLAW_GATEWAY_TOKEN}"
-  },
-  "providers": {
-    "github-copilot": {
-      "type": "copilot",
-      "apiKey": "${OPENCLAW_MODEL_PROVIDER_KEY}"
+    "bind": "loopback",
+    "auth": {
+      "mode": "token",
+      "token": "${OPENCLAW_GATEWAY_TOKEN}"
     }
   },
-  "model": "github-copilot/claude-sonnet-4",
+  "auth": {
+    "profiles": {
+      "anthropic:default": {
+        "provider": "anthropic",
+        "mode": "api_key"
+      }
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": {
+        "primary": "anthropic/claude-sonnet-4-5"
+      },
+      "workspace": "~/.openclaw/workspace",
+      "timeoutSeconds": 300,
+      "heartbeat": {
+        "every": "0m"
+      },
+      "sandbox": {
+        "mode": "off"
+      }
+    }
+  },
+  "tools": {
+    "web": {
+      "search": {
+        "enabled": false
+      },
+      "fetch": {
+        "enabled": true
+      }
+    }
+  },
   "channels": {},
-  "agent": {
-    "workspace": "~/.openclaw/workspace"
+  "commands": {
+    "restart": false
   }
 }

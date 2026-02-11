@@ -70,43 +70,50 @@ jobs:
 
       - name: Configure OpenClaw
         env:
-          OPENCLAW_MODEL_PROVIDER_KEY: ${{ secrets.OPENCLAW_MODEL_PROVIDER_KEY }}
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
-          OPENCLAW_TELEGRAM_TOKEN: ${{ secrets.OPENCLAW_TELEGRAM_TOKEN }}
-          OPENCLAW_TELEGRAM_CHAT_ID: ${{ secrets.OPENCLAW_TELEGRAM_CHAT_ID }}
         run: |
           mkdir -p ~/.openclaw
 
-          # Write config if it doesn't exist (first run)
-          if [ ! -f ~/.openclaw/openclaw.json ]; then
-            echo "First run — writing config from template..."
-            envsubst < config/openclaw.template.json > ~/.openclaw/openclaw.json
-          fi
+          # Always write fresh config (template may have changed)
+          envsubst < config/openclaw.template.json > ~/.openclaw/openclaw.json
+          echo "✅ Config written"
+
+          # Validate config
+          openclaw config get gateway.mode || echo "⚠️ Config validation issue"
 
           # Initialize workspace if needed
           if [ ! -d ~/.openclaw/workspace ]; then
             mkdir -p ~/.openclaw/workspace
             cp -r workspace/* ~/.openclaw/workspace/ 2>/dev/null || true
+            echo "✅ Workspace initialized from repo"
+          else
+            echo "✅ Workspace restored from cache"
           fi
 
-          echo "✅ OpenClaw configured"
           echo "Chain link: ${{ github.event.inputs.chain_number || '1' }}"
 
       - name: Start OpenClaw Gateway
         env:
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.OPENCLAW_MODEL_PROVIDER_KEY }}
         run: |
           # Start gateway in background
           openclaw gateway run --port 18789 &
           GATEWAY_PID=$!
           echo "GATEWAY_PID=$GATEWAY_PID" >> $GITHUB_ENV
 
-          # Wait for gateway to be ready
-          echo "Waiting for gateway..."
+          # Wait for gateway to be ready (up to 60s)
+          echo "Waiting for gateway to start..."
           for i in $(seq 1 30); do
-            if openclaw gateway health --port 18789 2>/dev/null; then
-              echo "✅ Gateway is ready"
+            if curl -sf http://127.0.0.1:18789/health > /dev/null 2>&1; then
+              echo "✅ Gateway is ready (attempt $i)"
               break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "❌ Gateway failed to start after 60 seconds"
+              # Show gateway logs for debugging
+              cat ~/.openclaw/logs/*.log 2>/dev/null | tail -50 || true
+              exit 1
             fi
             sleep 2
           done
@@ -115,15 +122,17 @@ jobs:
         env:
           TASK: ${{ github.event.inputs.task }}
           CHAIN_NUMBER: ${{ github.event.inputs.chain_number || '1' }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.OPENCLAW_MODEL_PROVIDER_KEY }}
         run: |
           START_TIME=$(date +%s)
 
           if [ -n "$TASK" ]; then
             echo "📋 Running task: $TASK"
-            openclaw agent --message "$TASK" --timeout 300 || true
+            openclaw agent --message "$TASK" --timeout 300
           else
             echo "💓 Running default heartbeat"
-            openclaw agent --message "You are running inside GitHub Actions (chain #${CHAIN_NUMBER}). Check your HEARTBEAT.md and do productive work. Report what you did." --timeout 300 || true
+            openclaw agent --message "You are running inside GitHub Actions (chain #${CHAIN_NUMBER}). Check your HEARTBEAT.md and do productive work. Report what you did." --timeout 300
           fi
 
           # Continuous heartbeat loop until timeout
@@ -137,7 +146,7 @@ jobs:
             REMAINING=$(( ${{ env.MAX_RUNTIME_SECONDS }} - ELAPSED ))
             echo "💓 Heartbeat at $(date -u +%H:%M:%S) UTC — ${REMAINING}s remaining"
 
-            openclaw agent --message "Heartbeat check. You have ${REMAINING} seconds remaining in this Actions run (chain #${CHAIN_NUMBER}). Do productive work or reply HEARTBEAT_OK." --timeout 300 || true
+            openclaw agent --message "Heartbeat check. You have ${REMAINING} seconds remaining in this Actions run (chain #${CHAIN_NUMBER}). Do productive work or reply HEARTBEAT_OK." --timeout 300
 
             sleep ${{ env.HEARTBEAT_INTERVAL }}
           done
