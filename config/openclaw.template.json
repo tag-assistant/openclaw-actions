@@ -10,16 +10,16 @@
   },
   "auth": {
     "profiles": {
-      "anthropic:default": {
-        "provider": "anthropic",
-        "mode": "api_key"
+      "github-copilot:github": {
+        "provider": "github-copilot",
+        "mode": "token"
       }
     }
   },
   "agents": {
     "defaults": {
       "model": {
-        "primary": "anthropic/claude-sonnet-4-5"
+        "primary": "github-copilot/claude-sonnet-4-5"
       },
       "workspace": "~/.openclaw/workspace",
       "timeoutSeconds": 300,

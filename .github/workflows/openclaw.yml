@@ -23,9 +23,8 @@ on:
         required: false
         type: number
         default: 1
-  # schedule:
-    # Disabled until a portable API key is available (github-copilot requires device login)
-    # - cron: '0 8 * * *'  # Daily at 8 AM UTC
+  schedule:
+    - cron: '0 8 * * *'  # Daily at 8 AM UTC
 
 env:
   OPENCLAW_VERSION: "latest"
@@ -70,12 +69,33 @@ jobs:
       - name: Configure OpenClaw
         env:
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          GITHUB_COPILOT_TOKEN: ${{ secrets.COPILOT_TOKEN }}
         run: |
           mkdir -p ~/.openclaw
+          mkdir -p ~/.openclaw/agents/main/agent
 
-          # Always write fresh config (template may have changed)
+          # Write config from template
           envsubst < config/openclaw.template.json > ~/.openclaw/openclaw.json
           echo "✅ Config written"
+
+          # Write auth-profiles.json with Copilot token
+          cat > ~/.openclaw/agents/main/agent/auth-profiles.json << EOF
+          {
+            "version": 1,
+            "profiles": {
+              "github-copilot:github": {
+                "type": "token",
+                "provider": "github-copilot",
+                "token": "${GITHUB_COPILOT_TOKEN}"
+              }
+            },
+            "lastGood": {
+              "github-copilot": "github-copilot:github"
+            },
+            "usageStats": {}
+          }
+          EOF
+          echo "✅ Auth profiles written"
 
           # Validate config
           openclaw config get gateway.mode || echo "⚠️ Config validation issue"
@@ -94,7 +114,6 @@ jobs:
       - name: Start OpenClaw Gateway
         env:
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.OPENCLAW_MODEL_PROVIDER_KEY }}
         run: |
           # Start gateway in background
           openclaw gateway run --port 18789 &
@@ -110,7 +129,6 @@ jobs:
             fi
             if [ $i -eq 30 ]; then
               echo "❌ Gateway failed to start after 60 seconds"
-              # Show gateway logs for debugging
               cat ~/.openclaw/logs/*.log 2>/dev/null | tail -50 || true
               exit 1
             fi
@@ -122,7 +140,6 @@ jobs:
           TASK: ${{ github.event.inputs.task }}
           CHAIN_NUMBER: ${{ github.event.inputs.chain_number || '1' }}
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
-          ANTHROPIC_API_KEY: ${{ secrets.OPENCLAW_MODEL_PROVIDER_KEY }}
         run: |
           START_TIME=$(date +%s)
 
