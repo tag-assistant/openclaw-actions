@@ -23,10 +23,9 @@ on:
         required: false
         type: number
         default: 1
-  schedule:
-    # Optional: run on a schedule (uncomment to enable)
-    # - cron: '0 */6 * * *'  # Every 6 hours
-    - cron: '0 8 * * *'  # Daily at 8 AM UTC
+  # schedule:
+    # Disabled until a portable API key is available (github-copilot requires device login)
+    # - cron: '0 8 * * *'  # Daily at 8 AM UTC
 
 env:
   OPENCLAW_VERSION: "latest"
