@@ -143,12 +143,14 @@ jobs:
         run: |
           START_TIME=$(date +%s)
 
+          AGENT_FLAGS="--local --timeout 300"
+
           if [ -n "$TASK" ]; then
             echo "📋 Running task: $TASK"
-            openclaw agent --message "$TASK" --timeout 300
+            openclaw agent $AGENT_FLAGS --message "$TASK"
           else
             echo "💓 Running default heartbeat"
-            openclaw agent --message "You are running inside GitHub Actions (chain #${CHAIN_NUMBER}). Check your HEARTBEAT.md and do productive work. Report what you did." --timeout 300
+            openclaw agent $AGENT_FLAGS --message "You are running inside GitHub Actions (chain #${CHAIN_NUMBER}). Check your HEARTBEAT.md and do productive work. Report what you did."
           fi
 
           # Continuous heartbeat loop until timeout
@@ -162,7 +164,7 @@ jobs:
             REMAINING=$(( ${{ env.MAX_RUNTIME_SECONDS }} - ELAPSED ))
             echo "💓 Heartbeat at $(date -u +%H:%M:%S) UTC — ${REMAINING}s remaining"
 
-            openclaw agent --message "Heartbeat check. You have ${REMAINING} seconds remaining in this Actions run (chain #${CHAIN_NUMBER}). Do productive work or reply HEARTBEAT_OK." --timeout 300
+            openclaw agent $AGENT_FLAGS --message "Heartbeat check. You have ${REMAINING} seconds remaining in this Actions run (chain #${CHAIN_NUMBER}). Do productive work or reply HEARTBEAT_OK."
 
             sleep ${{ env.HEARTBEAT_INTERVAL }}
           done
