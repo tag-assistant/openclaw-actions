@@ -19,7 +19,7 @@
   "agents": {
     "defaults": {
       "model": {
-        "primary": "github-copilot/claude-sonnet-4-5"
+        "primary": "github-copilot/claude-sonnet-4"
       },
       "workspace": "~/.openclaw/workspace",
       "timeoutSeconds": 300,
